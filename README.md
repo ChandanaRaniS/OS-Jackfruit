@@ -1,122 +1,178 @@
+# Multi-Container Runtime
 
-Container Memory Monitor (Linux Kernel Module)
-Overview
+## Team Information
 
-The Container Memory Monitor is a Linux Kernel Module (LKM) that monitors the memory usage of user-specified processes. It allows users to define soft and hard memory limits for processes and enforces them in real-time.
+* Chandana Rani S -PES2UG24AM044
+* Atharvi Desurkar -PES2UG24AM034
+* Team Size: 2 Students
 
- Soft Limit → Logs a warning when exceeded
- Hard Limit → Terminates the process (SIGKILL)
+---
 
-The module communicates with user-space applications using IOCTL system calls.
+## Project Summary
 
-Features
- Real-time memory monitoring (RSS)
- Kernel thread for continuous tracking
- Soft & hard memory limit enforcement
- Linked list to manage multiple processes
- Thread-safe using mutex locks
- Character device interface (/dev/container_monitor)
- Project Structure
-.
-├── monitor.c              # Kernel module source code
-├── monitor_ioctl.h        # IOCTL definitions and structures
-├── Makefile              # Build file for kernel module
-└── user.c (optional)     # User-space test program
-Requirements
-Linux OS (Ubuntu recommended, running in VMware)
-Kernel headers installed
-GCC and Make tools
+This project implements a lightweight Linux container runtime in C with a long-running supervisor process and a kernel-space memory monitor. The system supports multiple containers, inter-process communication, logging, and memory limit enforcement.
 
-Install dependencies:
+The project consists of two main components:
 
+### 1. User-Space Runtime (engine.c)
+
+* Implements a supervisor process that manages multiple containers
+* Supports CLI commands like start, run, ps, logs, and stop
+* Uses IPC for communication between client and supervisor
+* Handles container lifecycle and metadata tracking
+
+### 2. Kernel-Space Monitor (monitor.c)
+
+* Implemented as a Linux Kernel Module (LKM)
+* Tracks container processes using PID
+* Enforces soft and hard memory limits
+* Uses ioctl for communication with user-space
+
+---
+
+## Environment Setup
+
+```bash
 sudo apt update
-sudo apt install build-essential linux-headers-$(uname -r)
- Build Instructions
+sudo apt install -y build-essential linux-headers-$(uname -r)
+```
 
-Compile the kernel module:
+---
 
+## Build Instructions
+
+### Build all components
+
+```bash
 make
+```
 
-This generates:
+---
 
-monitor.ko
- Load the Module
+## Run Instructions
 
-Insert the module into the kernel:
+### Load kernel module
 
+```bash
 sudo insmod monitor.ko
+lsmod | grep monitor
+```
 
-Check logs:
+### Start supervisor
 
-dmesg | tail
+```bash
+sudo ./engine supervisor ./rootfs-base
+```
 
-You will see:
+### Create container rootfs
 
-Monitor module loaded. Major: <number>
-🔌 Create Device File
+```bash
+cp -a ./rootfs-base ./rootfs-alpha
+cp -a ./rootfs-base ./rootfs-beta
+```
 
-Create the character device:
+### Start containers
 
-sudo mknod /dev/container_monitor c <major_number> 0
-sudo chmod 666 /dev/container_monitor
- Usage (User-Space Program)
+```bash
+sudo ./engine start alpha ./rootfs-alpha /bin/sh
+sudo ./engine start beta ./rootfs-beta /bin/sh
+```
 
-Example usage with ioctl():
+### List containers
 
-#include <stdio.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include "monitor_ioctl.h"
+```bash
+sudo ./engine ps
+```
 
-int main() {
-    int fd = open("/dev/container_monitor", O_RDWR);
+### View logs
 
-    struct monitor_request req;
-    req.pid = getpid();
-    req.soft_limit = 50 * 1024 * 1024;  // 50MB
-    req.hard_limit = 100 * 1024 * 1024; // 100MB
+```bash
+sudo ./engine logs alpha
+```
 
-    ioctl(fd, IOCTL_REGISTER, &req);
+### Stop container
 
-    while(1);
-    return 0;
-}
+```bash
+sudo ./engine stop alpha
+```
 
-Compile and run:
+### Unload module
 
-gcc user.c -o user
-./user
- How It Works
-User registers a process via ioctl()
-Kernel module stores process info in a linked list
-A kernel thread runs every second
-It checks memory usage (RSS) of each process
-Actions taken:
-If memory > soft limit → Warning logged
-If memory > hard limit → Process killed
- Important Concepts
-IOCTL → Communication between user space and kernel
-Kernel Thread → Background monitoring
-RSS (Resident Set Size) → Actual memory used
-Mutex Locking → Prevents race conditions
-Signal Handling → SIGKILL for termination
-Unload the Module
-
-Remove the module:
-
+```bash
 sudo rmmod monitor
- Troubleshooting
-Issue	Solution
-invalid module format	Kernel headers mismatch
-Permission denied	Use sudo
-No logs	Check dmesg
-ioctl not working	Ensure device file exists
- Applications
-Container memory control
-OS resource management
-System monitoring tools
-Kernel programming practice
-Limitations
-Uses polling (1-second interval)
-Hard kill may cause abrupt termination
-No advanced scheduling or prioritization
+```
+
+---
+
+## Test Programs
+
+### memory_hog.c
+
+* Simulates memory pressure by allocating memory periodically
+* Used to test soft and hard memory limits
+
+### cpu_hog.c
+
+* Runs an infinite loop to consume CPU
+* Used for scheduling experiments
+
+---
+
+## Architecture Overview
+
+* Supervisor acts as a long-running daemon
+* CLI acts as a client sending commands
+* IPC used:
+
+  * File-based communication (control path)
+  * Pipes for logging
+* Containers created using `clone()` with namespaces
+
+---
+
+## Features
+
+* Multi-container management
+* Namespace isolation (PID, UTS, mount)
+* IPC-based communication
+* Kernel-level memory monitoring
+* Soft and hard limit enforcement
+* Logging system using bounded buffer
+
+---
+
+## Engineering Analysis
+
+### Isolation Mechanisms
+
+Containers use namespaces (PID, UTS, mount) and chroot to isolate filesystem and processes.
+
+### Supervisor Design
+
+A long-running supervisor manages lifecycle, tracks metadata, and handles signals.
+
+### IPC and Synchronization
+
+IPC is used for communication between client and supervisor. Proper synchronization avoids race conditions.
+
+### Memory Management
+
+RSS memory is monitored using kernel module. Soft limits trigger warnings, hard limits terminate processes.
+
+### Scheduling
+
+Different workloads demonstrate Linux scheduling behavior using CPU-bound and memory-bound processes.
+
+---
+
+## Design Decisions and Tradeoffs
+
+* File-based IPC chosen for simplicity (tradeoff: slower than sockets)
+* Chroot used instead of pivot_root (tradeoff: less secure but easier)
+* Simple logging pipeline implemented (tradeoff: limited scalability)
+
+---
+
+## Conclusion
+
+This project demonstrates key OS concepts including process isolation, IPC, kernel-user interaction, and scheduling behavior through a modular container runtime system.
