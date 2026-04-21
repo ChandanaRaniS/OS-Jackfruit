@@ -2,26 +2,30 @@
 
 ## Team Information
 
-* Chandana Rani S -PES2UG24AM044
-* Atharvi Desurkar -PES2UG24AM034
+* Chandana Rani S - PES2UG24AM044
+* Atharvi Desurkar - PES2UG24AM034
 * Team Size: 2 Students
 
 ---
 
-## Project Summary
+# Project Summary
 
 This project implements a lightweight Linux container runtime in C with a long-running supervisor process and a kernel-space memory monitor. The system supports multiple containers, inter-process communication, logging, and memory limit enforcement.
 
 The project consists of two main components:
 
-### 1. User-Space Runtime (engine.c)
+---
+
+## 1. User-Space Runtime (engine.c)
 
 * Implements a supervisor process that manages multiple containers
 * Supports CLI commands like start, run, ps, logs, and stop
 * Uses IPC for communication between client and supervisor
 * Handles container lifecycle and metadata tracking
 
-### 2. Kernel-Space Monitor (monitor.c)
+---
+
+## 2. Kernel-Space Monitor (monitor.c)
 
 * Implemented as a Linux Kernel Module (LKM)
 * Tracks container processes using PID
@@ -30,81 +34,79 @@ The project consists of two main components:
 
 ---
 
-## Environment Setup
+# Environment Setup
 
-```bash
+```bash id="kxnbel"
 sudo apt update
 sudo apt install -y build-essential linux-headers-$(uname -r)
 ```
 
 ---
 
-## Build Instructions
+# Build Instructions
 
-### Build all components
-
-```bash
+```bash id="xk9f2u"
 make
 ```
 
 ---
 
-## Run Instructions
+# Run Instructions
 
 ### Load kernel module
 
-```bash
+```bash id="ksg9bp"
 sudo insmod monitor.ko
 lsmod | grep monitor
 ```
 
 ### Start supervisor
 
-```bash
+```bash id="o8kncc"
 sudo ./engine supervisor ./rootfs-base
 ```
 
 ### Create container rootfs
 
-```bash
+```bash id="kribie"
 cp -a ./rootfs-base ./rootfs-alpha
 cp -a ./rootfs-base ./rootfs-beta
 ```
 
 ### Start containers
 
-```bash
+```bash id="b3xqcv"
 sudo ./engine start alpha ./rootfs-alpha /bin/sh
 sudo ./engine start beta ./rootfs-beta /bin/sh
 ```
 
 ### List containers
 
-```bash
+```bash id="e5vdf9"
 sudo ./engine ps
 ```
 
 ### View logs
 
-```bash
+```bash id="yqj1kq"
 sudo ./engine logs alpha
 ```
 
 ### Stop container
 
-```bash
+```bash id="k3qkpo"
 sudo ./engine stop alpha
 ```
 
 ### Unload module
 
-```bash
+```bash id="d2u4ra"
 sudo rmmod monitor
 ```
 
 ---
 
-## Test Programs
+# Test Programs
 
 ### memory_hog.c
 
@@ -118,7 +120,7 @@ sudo rmmod monitor
 
 ---
 
-## Architecture Overview
+# Architecture Overview
 
 * Supervisor acts as a long-running daemon
 * CLI acts as a client sending commands
@@ -130,7 +132,7 @@ sudo rmmod monitor
 
 ---
 
-## Features
+# Features
 
 * Multi-container management
 * Namespace isolation (PID, UTS, mount)
@@ -141,38 +143,111 @@ sudo rmmod monitor
 
 ---
 
-## Engineering Analysis
+# IPC, Synchronization, and Bounded Buffer
 
-### Isolation Mechanisms
+## Synchronization Mechanisms Used
 
-Containers use namespaces (PID, UTS, mount) and chroot to isolate filesystem and processes.
+* **Mutex locks** are used to protect shared data structures such as:
 
-### Supervisor Design
+  * Container metadata list
+  * Logging buffer
 
-A long-running supervisor manages lifecycle, tracks metadata, and handles signals.
+* **Condition variables** (or signaling mechanism) are used in the logging system to coordinate:
 
-### IPC and Synchronization
-
-IPC is used for communication between client and supervisor. Proper synchronization avoids race conditions.
-
-### Memory Management
-
-RSS memory is monitored using kernel module. Soft limits trigger warnings, hard limits terminate processes.
-
-### Scheduling
-
-Different workloads demonstrate Linux scheduling behavior using CPU-bound and memory-bound processes.
+  * Producer threads (writing logs)
+  * Consumer threads (writing logs to files)
 
 ---
 
-## Design Decisions and Tradeoffs
+## Why Mutex is Used
+
+* Prevents multiple threads from modifying shared data simultaneously
+* Ensures **thread-safe access** to shared memory
+* Avoids data corruption in logging and metadata tracking
+
+---
+
+## Race Conditions Without Synchronization
+
+* Two threads writing logs at the same time → **corrupted output**
+* Buffer overflow when multiple producers write → **data loss**
+* Consumer reading incomplete data → **inconsistent logs**
+* Metadata updates overlapping → **incorrect container state**
+
+---
+
+## Bounded Buffer Design
+
+* A **fixed-size buffer** is used between producer and consumer threads
+
+* Producers:
+
+  * Read container output (stdout/stderr)
+  * Insert data into buffer
+
+* Consumers:
+
+  * Remove data from buffer
+  * Write to log files
+
+---
+
+## How Bounded Buffer Prevents Issues
+
+* **No data loss**: producers wait when buffer is full
+* **No corruption**: mutex ensures only one thread modifies buffer at a time
+* **No deadlock**: proper signaling ensures threads wake correctly
+* **Ordered logging**: maintains correct sequence of logs
+* **Graceful shutdown**: consumer flushes remaining data before exit
+
+---
+
+# Engineering Analysis
+
+## Isolation Mechanisms
+
+Containers use namespaces (PID, UTS, mount) and chroot to isolate filesystem and processes. Each container has its own environment but shares the host kernel.
+
+---
+
+## Supervisor Design
+
+A long-running supervisor manages lifecycle, tracks metadata, and handles signals. It ensures proper process creation, monitoring, and cleanup.
+
+---
+
+## IPC and Synchronization
+
+IPC is used for communication between client and supervisor, while pipes are used for logging. Mutex locks and synchronization primitives prevent race conditions and ensure consistency.
+
+---
+
+## Memory Management
+
+RSS memory is monitored using kernel module. Soft limits trigger warnings, while hard limits enforce termination. Kernel-level enforcement ensures accurate and reliable control.
+
+---
+
+## Scheduling
+
+Different workloads demonstrate Linux scheduling behavior using CPU-bound and memory-bound processes. The scheduler allocates CPU time based on priority and workload characteristics.
+
+---
+
+# Design Decisions and Tradeoffs
 
 * File-based IPC chosen for simplicity (tradeoff: slower than sockets)
 * Chroot used instead of pivot_root (tradeoff: less secure but easier)
-* Simple logging pipeline implemented (tradeoff: limited scalability)
+* Bounded buffer logging implemented (tradeoff: increased complexity but ensures correctness)
 
 ---
 
-## Conclusion
+# Conclusion
 
-This project demonstrates key OS concepts including process isolation, IPC, kernel-user interaction, and scheduling behavior through a modular container runtime system.
+This project demonstrates key OS concepts including process isolation, IPC, synchronization, kernel-user interaction, memory enforcement, and scheduling behavior through a modular container runtime system.
+
+---
+
+# Final Statement
+
+> This implementation acts as a lightweight version of Docker, combining user-space container management with kernel-level resource control.
